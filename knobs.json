@@ -23,9 +23,9 @@
   "PRIO": 0,
   "DROP_R": 320,
   "DROP_CROWD": 35,
-  "CRATE_R": 180,
-  "FARM_R": 170,
-  "FARM_T": 420,
-  "FARM_HP": 0.45,
-  "CUBE_R": 150
+  "CRATE_R": 110,
+  "FARM_R": 90,
+  "FARM_T": 260,
+  "FARM_HP": 0.6,
+  "CUBE_R": 80
 }
