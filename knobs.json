@@ -14,9 +14,9 @@
   "SEEK_IN_FIGHT": 1,
   "AVOID_LASER": 1,
   "AVOID_LASER_D": 60,
-  "DROPS": 1,
+  "DROPS": 0,
   "UPG": 2,
-  "PASSIVE": 1,
+  "PASSIVE": 0,
   "PASSIVE_D": 50,
   "ROOF": 0
 }
