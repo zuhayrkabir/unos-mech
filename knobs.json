@@ -19,6 +19,6 @@
   "PASSIVE": 0,
   "PASSIVE_D": 50,
   "ROOF": 0,
-  "LIGHT2": 0,
+  "LIGHT2": 1,
   "PRIO": 0
 }
