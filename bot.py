@@ -40,6 +40,8 @@ K_EXPLORE = _k("EXPLORE", 0)      # roam for a laser when nothing is known
 K_LASER_SEEK = _k("LASER_SEEK", 260)   # how far we will go for a laser we have seen
 K_LASER_W = _k("LASER_W", 0.15)        # distance weight of a laser goal (lower = higher priority)
 K_SEEK_IN_FIGHT = _k("SEEK_IN_FIGHT", 1)
+K_AVOID_LASER = _k("AVOID_LASER", 0)      # without a laser, break line of sight from laser carriers at range
+K_AVOID_LASER_D = _k("AVOID_LASER_D", 60)
 PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
@@ -331,6 +333,10 @@ class Bot:
                 retreat = True
             elif n_threat >= 2 and (hpf < K_TWO_HP or not finishing):
                 retreat = True
+        if (target is not None and not retreat and K_AVOID_LASER and not has_laser
+                and "laser" in (target.get("weapons") or []) and target["_d"] > K_AVOID_LASER_D
+                and not (target.get("hp", 1400) < 300 and target["_d"] < 120)):
+            retreat = True
         if target is not None and not retreat and K_RACE:
             # losing the damage race: time-to-die vs time-to-kill
             ttd = me["hp"] / max(din, 1.0)

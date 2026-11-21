@@ -11,5 +11,7 @@
   "EXPLORE": 1,
   "LASER_SEEK": 260,
   "LASER_W": 0.15,
-  "SEEK_IN_FIGHT": 1
+  "SEEK_IN_FIGHT": 1,
+  "AVOID_LASER": 0,
+  "AVOID_LASER_D": 60
 }
