@@ -27,5 +27,7 @@
   "FARM_R": 90,
   "FARM_T": 260,
   "FARM_HP": 0.6,
-  "CUBE_R": 80
+  "CUBE_R": 80,
+  "ASTAR_STEPS": 360,
+  "COVER_LOS": 120
 }

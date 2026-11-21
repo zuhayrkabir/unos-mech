@@ -49,6 +49,8 @@ K_PASSIVE = _k("PASSIVE", 0)              # only fight when shot at, target weak
 K_PASSIVE_D = _k("PASSIVE_D", 50)
 K_LIGHT2 = _k("LIGHT2", 0)                # with a laser, swap the arm gun for a lightning gun
 K_PRIO = _k("PRIO", 0)                    # target whoever is charging a laser at us first
+K_ASTAR_STEPS = _k("ASTAR_STEPS", 360)    # A* expansions per decision (fixed work, deterministic)
+K_COVER_LOS = _k("COVER_LOS", 120)        # line-of-sight checks per cover search
 K_DROP_R = _k("DROP_R", 150)              # farthest supply drop we go for
 K_DROP_CROWD = _k("DROP_CROWD", 60)       # skip a drop if another mech is this close to it
 K_CRATE_R = _k("CRATE_R", 110)
@@ -183,7 +185,10 @@ class Bot:
         if self.astar is None:
             return
         t0 = time.perf_counter()
-        while not self.astar.done and time.perf_counter() - self.tick_start < 0.006:
+        # fixed work per tick (not wall time) so the bot plays the same on every machine
+        for _ in range(int(K_ASTAR_STEPS) // 60):
+            if self.astar.done:
+                break
             self.astar.step(60)
         if self.astar.done:
             p = self.astar.path
@@ -697,9 +702,11 @@ class Bot:
             return None
         best, bd = None, 1e9
         w = self.w
+        budget = [int(K_COVER_LOS)]
+        threats = threats[:2]
         for r in [r for r in (8, 14, 22, 32, 44) if r <= maxr]:
             for k in range(16):
-                if time.perf_counter() - self.tick_start > 0.012:
+                if budget[0] <= 0:
                     break
                 a = k * TAU / 16
                 cx, cy = self.x + math.cos(a) * r, self.y + math.sin(a) * r
@@ -708,6 +715,7 @@ class Bot:
                 gz = w.surface(cx, cy)
                 hidden = True
                 for p in threats:
+                    budget[0] -= 2
                     if w.los((p[0], p[1], p[2] + 8), (cx, cy, gz + 5)) or w.los((p[0], p[1], p[2] + 8), (cx, cy, gz + 8.5)):
                         hidden = False
                         break
@@ -720,7 +728,7 @@ class Bot:
                     bd, best = sc, (cx, cy)
             if best is not None and r >= 18:
                 break
-            if time.perf_counter() - self.tick_start > 0.014:
+            if budget[0] <= 0:
                 break
         return best
 
