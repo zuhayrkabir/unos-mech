@@ -12,8 +12,22 @@ from world import AStar, World
 HERE = os.path.dirname(os.path.abspath(__file__))
 PI = math.pi
 PROFILE = os.environ.get("UNOS_PROF") == "1"
+try:
+    import json as _json
+    _KN = _json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "knobs.json")))
+except Exception:
+    _KN = {}
+
+
 def _k(name, default):
-    return float(os.environ.get("K_" + name, default))
+    """Tuning knob: env K_<NAME> > knobs.json <NAME> > default."""
+    v = os.environ.get("K_" + name)
+    if v is None:
+        v = _KN.get(name, default)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float(default)
 K_LASER_LO = _k("LASER_LO", 70); K_LASER_HI = _k("LASER_HI", 170)
 K_GUN_LO = _k("GUN_LO", 45); K_GUN_HI = _k("GUN_HI", 110)
 K_RETREAT_HP = _k("RETREAT_HP", 0.35)
@@ -21,6 +35,8 @@ K_TWO_HP = _k("TWO_HP", 0.9)
 K_DUCK = _k("DUCK", 1)
 K_RACE = _k("RACE", 1)
 K_PRECHARGE = _k("PRECHARGE", 0)
+K_FARM = _k("FARM", 1)            # shoot drones / crates for cubes
+K_EXPLORE = _k("EXPLORE", 0)      # roam for a laser when nothing is known
 PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
@@ -440,7 +456,7 @@ class Bot:
             if dist * 0.8 < bd:
                 best, bd, bmode = (p[0], p[1]), dist * 0.8, "cube"
         # crates (shoot from range; walk closer only if far)
-        if hpf > 0.4:
+        if hpf > 0.4 and K_FARM:
             for cid, (tt, p) in self.crate_mem.items():
                 if self.blacklist.get(cid, -99) > self.t:
                     continue
@@ -455,7 +471,7 @@ class Bot:
                         best, bd, bmode = (p[0], p[1]), sc, "crate"
                     self.aux_id = cid
         # NPC drones for cubes
-        if hpf > 0.6 and self.t < 260:
+        if hpf > 0.6 and self.t < 260 and K_FARM:
             for n in npcs:
                 p = n["pos"]
                 if n["_d"] > 90 or not self.goal_allowed(p[0], p[1]):
@@ -469,7 +485,7 @@ class Bot:
                     else:
                         best, bd, bmode = (p[0], p[1]), sc, "npc"
                     self.aux_id = n["id"]
-        if best is None and EXPLORE and not has_laser and self.t < 260 and hpf > 0.5:
+        if best is None and (EXPLORE or K_EXPLORE) and not has_laser and self.t < 260 and hpf > 0.5:
             ex = self.explore_goal()
             if ex is not None:
                 return ex, "explore"
