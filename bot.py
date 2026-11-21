@@ -48,7 +48,14 @@ K_UPG = _k("UPG", 0)                      # upgrade priority: 0 balanced, 1 surv
 K_PASSIVE = _k("PASSIVE", 0)              # only fight when shot at, target weak, or target close
 K_PASSIVE_D = _k("PASSIVE_D", 50)
 K_LIGHT2 = _k("LIGHT2", 0)                # with a laser, swap the arm gun for a lightning gun
-K_PRIO = _k("PRIO", 0)                    # target whoever is charging a laser at us first                    # climb (jump + jet) to weapons lying on roofs
+K_PRIO = _k("PRIO", 0)                    # target whoever is charging a laser at us first
+K_DROP_R = _k("DROP_R", 150)              # farthest supply drop we go for
+K_DROP_CROWD = _k("DROP_CROWD", 60)       # skip a drop if another mech is this close to it
+K_CRATE_R = _k("CRATE_R", 110)
+K_FARM_R = _k("FARM_R", 90)               # drone hunting radius
+K_FARM_T = _k("FARM_T", 260)              # stop hunting drones after this many seconds
+K_FARM_HP = _k("FARM_HP", 0.6)
+K_CUBE_R = _k("CUBE_R", 80)                    # climb (jump + jet) to weapons lying on roofs
 PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
@@ -488,11 +495,11 @@ class Bot:
         for d in (obs.get("drops", []) if K_DROPS else []):
             p = d["pos"]
             dist = hyp(x, y, p[0], p[1])
-            if dist > 150 or not self.in_safe(p[0], p[1], 5):
+            if dist > K_DROP_R or not self.in_safe(p[0], p[1], 5):
                 continue
             if d["lands_in"] > dist / 11.0 + 6:
                 continue
-            others = [m for m in obs.get("mechs", []) if m["kind"] == "mech" and hyp(m["pos"][0], m["pos"][1], p[0], p[1]) < 60]
+            others = [m for m in obs.get("mechs", []) if m["kind"] == "mech" and hyp(m["pos"][0], m["pos"][1], p[0], p[1]) < K_DROP_CROWD]
             if others:
                 continue
             if d.get("holder") not in (None, me["id"]):
@@ -520,7 +527,7 @@ class Bot:
         for c in obs.get("cubes", []):
             p = c["pos"]
             dist = hyp(x, y, p[0], p[1])
-            if dist > 80 or not self.goal_allowed(p[0], p[1]):
+            if dist > K_CUBE_R or not self.goal_allowed(p[0], p[1]):
                 continue
             if dist * 0.8 < bd:
                 best, bd, bmode = (p[0], p[1]), dist * 0.8, "cube"
@@ -530,7 +537,7 @@ class Bot:
                 if self.blacklist.get(cid, -99) > self.t:
                     continue
                 dist = hyp(x, y, p[0], p[1])
-                if dist > 110 or not self.goal_allowed(p[0], p[1]):
+                if dist > K_CRATE_R or not self.goal_allowed(p[0], p[1]):
                     continue
                 sc = dist * 1.2 + 10
                 if sc < bd:
@@ -540,10 +547,10 @@ class Bot:
                         best, bd, bmode = (p[0], p[1]), sc, "crate"
                     self.aux_id = cid
         # NPC drones for cubes
-        if hpf > 0.6 and self.t < 260 and K_FARM:
+        if hpf > K_FARM_HP and self.t < K_FARM_T and K_FARM:
             for n in npcs:
                 p = n["pos"]
-                if n["_d"] > 90 or not self.goal_allowed(p[0], p[1]):
+                if n["_d"] > K_FARM_R or not self.goal_allowed(p[0], p[1]):
                     continue
                 if self.blacklist.get(n["id"], -99) > self.t:
                     continue
