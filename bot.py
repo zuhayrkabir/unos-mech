@@ -46,7 +46,9 @@ K_ROOF = _k("ROOF", 0)
 K_DROPS = _k("DROPS", 1)                  # go for supply drops when it looks safe
 K_UPG = _k("UPG", 0)                      # upgrade priority: 0 balanced, 1 survive, 2 damage
 K_PASSIVE = _k("PASSIVE", 0)              # only fight when shot at, target weak, or target close
-K_PASSIVE_D = _k("PASSIVE_D", 50)                    # climb (jump + jet) to weapons lying on roofs
+K_PASSIVE_D = _k("PASSIVE_D", 50)
+K_LIGHT2 = _k("LIGHT2", 0)                # with a laser, swap the arm gun for a lightning gun
+K_PRIO = _k("PRIO", 0)                    # target whoever is charging a laser at us first                    # climb (jump + jet) to weapons lying on roofs
 PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
@@ -305,6 +307,11 @@ class Bot:
             if k == "lightning" and not has_light and kinds[1] is None:
                 act["take"] = p["id"]
                 break
+            if (K_LIGHT2 and k == "lightning" and not has_light and has_laser and kinds[0] == "gun"
+                    and not (weapons[0] and weapons[0].get("reload", 0) > 0)):
+                # laser + lightning: swap the arm gun out
+                act["take"] = p["id"]; act["drop"] = 0
+                break
 
         # ---- zone situation
         z = self.z
@@ -339,6 +346,11 @@ class Bot:
                 s = m["_d"] / 60.0 + m.get("hp", 1400) / 350.0
                 if self.threat and self.threat[2] == m["id"] and t - self.threat[0] < 3:
                     s -= 2.0
+                if K_PRIO and m.get("charging"):
+                    # a laser charging toward us is the biggest single hit in the game
+                    b = math.atan2(self.y - m["pos"][1], self.x - m["pos"][0])
+                    if abs(wrap(m.get("aim", [0, 0])[0] - b)) < 0.25:
+                        s -= 3.0
                 return s
             target = min(vis_enemies, key=score)
         close_threats = [m for m in vis_enemies if m["_d"] < 160]
@@ -490,7 +502,8 @@ class Bot:
                 best, bd, bmode = (p[0], p[1]), score, "drop"
         # weapons
         for pid, (tt, kind, p) in self.loot_mem.items():
-            want = (kind == "laser" and not has_laser) or (kind == "lightning" and not has_light and kinds[1] is None)
+            want = ((kind == "laser" and not has_laser) or (kind == "lightning" and not has_light and kinds[1] is None)
+                    or (K_LIGHT2 and kind == "lightning" and not has_light and has_laser and "gun" in kinds))
             if not want:
                 continue
             dist = hyp(x, y, p[0], p[1])
