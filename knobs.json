@@ -7,6 +7,6 @@
   "LASER_HI": 170,
   "GUN_LO": 45,
   "GUN_HI": 110,
-  "FARM": 1,
+  "FARM": 0,
   "EXPLORE": 0
 }
