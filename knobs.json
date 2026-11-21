@@ -1,6 +1,6 @@
 {
-  "RETREAT_HP": 0.5,
-  "TWO_HP": 0.9,
+  "RETREAT_HP": 0.2,
+  "TWO_HP": 0.5,
   "DUCK": 1,
   "RACE": 1,
   "LASER_LO": 70,
