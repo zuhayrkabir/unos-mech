@@ -13,7 +13,7 @@
   "LASER_W": 0.15,
   "SEEK_IN_FIGHT": 1,
   "AVOID_LASER": 1,
-  "AVOID_LASER_D": 30,
+  "AVOID_LASER_D": 100,
   "DROPS": 1,
   "UPG": 2,
   "PASSIVE": 0,
