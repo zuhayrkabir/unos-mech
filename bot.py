@@ -37,6 +37,9 @@ K_RACE = _k("RACE", 1)
 K_PRECHARGE = _k("PRECHARGE", 0)
 K_FARM = _k("FARM", 1)            # shoot drones / crates for cubes
 K_EXPLORE = _k("EXPLORE", 0)      # roam for a laser when nothing is known
+K_LASER_SEEK = _k("LASER_SEEK", 260)   # how far we will go for a laser we have seen
+K_LASER_W = _k("LASER_W", 0.15)        # distance weight of a laser goal (lower = higher priority)
+K_SEEK_IN_FIGHT = _k("SEEK_IN_FIGHT", 1)
 PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
@@ -249,7 +252,7 @@ class Bot:
             self.loot_mem[p["id"]] = (t, p["kind"], p["pos"])
         seen_p = {p["id"] for p in obs.get("pickups", [])}
         for pid, (tt, kind, pos) in list(self.loot_mem.items()):
-            if t - tt > 90 or (pid not in seen_p and hyp(self.x, self.y, pos[0], pos[1]) < 30):
+            if t - tt > 240 or (pid not in seen_p and hyp(self.x, self.y, pos[0], pos[1]) < 30):
                 del self.loot_mem[pid]
         for c in obs.get("crates", []):
             self.crate_mem[c["id"]] = (t, c["pos"])
@@ -364,6 +367,12 @@ class Bot:
             mode = "duck"
             mv = self.retreat_move(vis_enemies)
             boost = me["energy"] > 25
+        elif target is not None and K_SEEK_IN_FIGHT and not has_laser and self.known_laser() is not None and hpf > 0.3:
+            mode = "fight-seek"
+            lp = self.known_laser()
+            gx, gy = norm(*[a - b for a, b in zip(self.nav_dir(lp[0], lp[1]), (0, 0))])
+            fm, boost = self.fight_move(target, has_laser, has_light, hpf)
+            mv = norm(gx * 1.0 + fm[0] * 0.6, gy * 1.0 + fm[1] * 0.6)
         elif target is not None:
             mode = "fight"
             mv, boost = self.fight_move(target, has_laser, has_light, hpf)
@@ -442,9 +451,10 @@ class Bot:
             if not want:
                 continue
             dist = hyp(x, y, p[0], p[1])
-            if dist > 140 or not self.goal_allowed(p[0], p[1]):
+            lim = K_LASER_SEEK if kind == "laser" else 140
+            if dist > lim or not self.goal_allowed(p[0], p[1]):
                 continue
-            score = dist * (0.5 if kind == "laser" else 0.9)
+            score = dist * (K_LASER_W if kind == "laser" else 0.9)
             if score < bd:
                 best, bd, bmode = (p[0], p[1]), score, "loot"
         # cubes
@@ -518,6 +528,16 @@ class Bot:
             c = self.find_cover(threats, maxr=18)
             self.cover, self.cover_t, self.cover_born = c, self.t, self.t
         return c is not None and hyp(self.x, self.y, c[0], c[1]) < 18
+
+    def known_laser(self):
+        best, bd = None, 1e9
+        for pid, (tt, kind, p) in self.loot_mem.items():
+            if kind != "laser":
+                continue
+            d = hyp(self.x, self.y, p[0], p[1])
+            if d < K_LASER_SEEK and d < bd and self.goal_allowed(p[0], p[1]):
+                best, bd = p, d
+        return best
 
     def explore_goal(self):
         g = getattr(self, "_explore", None)
@@ -696,7 +716,7 @@ class Bot:
         aux = None  # crate or npc target (gun only)
         recent_mech = any(t - tt < 6 and hyp(self.x, self.y, p[0], p[1]) < 220 for tt, p, v, hp in self.enemy_mem.values())
         hurt = me["hp"] < me["max_hp"] * 0.85 and t - self.last_hit_t < 30
-        if tgt is None and not recent_mech and mode in ("crate", "npc", "hold", "cube", "loot", "drop", "explore"):
+        if tgt is None and not recent_mech and mode in ("crate", "npc", "hold", "cube", "drop", "explore"):
             # shoot nearby npcs / crates when not fighting mechs
             cands = []
             if mode == "npc" or self.me["hp"] / self.me["max_hp"] > 0.6:
