@@ -42,6 +42,11 @@ K_LASER_W = _k("LASER_W", 0.15)        # distance weight of a laser goal (lower 
 K_SEEK_IN_FIGHT = _k("SEEK_IN_FIGHT", 1)
 K_AVOID_LASER = _k("AVOID_LASER", 0)      # without a laser, break line of sight from laser carriers at range
 K_AVOID_LASER_D = _k("AVOID_LASER_D", 60)
+K_ROOF = _k("ROOF", 0)
+K_DROPS = _k("DROPS", 1)                  # go for supply drops when it looks safe
+K_UPG = _k("UPG", 0)                      # upgrade priority: 0 balanced, 1 survive, 2 damage
+K_PASSIVE = _k("PASSIVE", 0)              # only fight when shot at, target weak, or target close
+K_PASSIVE_D = _k("PASSIVE_D", 50)                    # climb (jump + jet) to weapons lying on roofs
 PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
@@ -52,6 +57,19 @@ UPGRADE_ORDER = [
     "sensors", "gun_velocity", "lightning_range", "lightning_chain", "laser_pierce",
     "mortar_reload", "mortar_velocity", "mortar_splash",
 ]
+
+
+UPGRADE_ORDERS = {
+    0: UPGRADE_ORDER,
+    # 1: survive first (more HP for the late zone)
+    1: ["plating", "armor", "nanites", "laser_charge", "laser_damage", "gun_rate", "gun_damage", "servos", "gyros",
+        "jets", "capacitor", "reactor", "sensors", "gun_mag", "gun_velocity", "lightning_efficiency",
+        "lightning_range", "lightning_chain", "laser_pierce", "mortar_reload", "mortar_velocity", "mortar_splash"],
+    # 2: kill faster
+    2: ["laser_damage", "laser_charge", "gun_damage", "gun_rate", "armor", "plating", "gun_mag", "nanites", "gyros",
+        "servos", "jets", "capacitor", "reactor", "sensors", "gun_velocity", "lightning_efficiency",
+        "lightning_range", "lightning_chain", "laser_pierce", "mortar_reload", "mortar_velocity", "mortar_splash"],
+}
 
 
 def wrap(a):
@@ -105,6 +123,8 @@ class Bot:
         self.prev_move = (0.0, 0.0)
         self.t0 = 0
         self.blacklist = {}
+        self.goal_z = None
+        self.climb_jet = False
         self.dmg_in = []
         self.dmg_out = []
         self.peek_until = -1
@@ -221,7 +241,8 @@ class Bot:
         off = obs.get("offer")
         if off:
             ch = off["choices"]
-            best = min(range(len(ch)), key=lambda i: UPGRADE_ORDER.index(ch[i]["id"]) if ch[i]["id"] in UPGRADE_ORDER else 99)
+            order = UPGRADE_ORDERS.get(int(K_UPG), UPGRADE_ORDER)
+            best = min(range(len(ch)), key=lambda i: order.index(ch[i]["id"]) if ch[i]["id"] in order else 99)
             act["pick"] = best
 
         # ---- events / memory
@@ -333,6 +354,9 @@ class Bot:
                 retreat = True
             elif n_threat >= 2 and (hpf < K_TWO_HP or not finishing):
                 retreat = True
+        if (target is not None and not retreat and K_PASSIVE
+                and not (t - self.last_hit_t < 3 or target.get("hp", 1400) < 450 or target["_d"] < K_PASSIVE_D)):
+            retreat = True
         if (target is not None and not retreat and K_AVOID_LASER and not has_laser
                 and "laser" in (target.get("weapons") or []) and target["_d"] > K_AVOID_LASER_D
                 and not (target.get("hp", 1400) < 300 and target["_d"] < 120)):
@@ -383,9 +407,19 @@ class Bot:
             mode = "fight"
             mv, boost = self.fight_move(target, has_laser, has_light, hpf)
         else:
+            self.goal_z = None
             goal, mode = self.pick_goal(obs, npcs, has_laser, has_light, hpf, (hx, hy))
             if goal is not None:
                 mv = self.nav_dir(goal[0], goal[1])
+                gz = self.goal_z if mode == "loot" else None
+                if K_ROOF and gz is not None and gz - self.z_ > 2.5 and hyp(self.x, self.y, goal[0], goal[1]) < 18:
+                    # weapon on a roof: jump, then jet up while pushing toward it
+                    mode = "climb"
+                    mv = norm(goal[0] - self.x, goal[1] - self.y)
+                    if me["grounded"]:
+                        jump = True
+                    elif me["energy"] > 4:
+                        self.climb_jet = True
             if mode == "hold" and hyp(self.x, self.y, hx, hy) < 6:
                 mv = (0.0, 0.0)
             elif mode == "hold":
@@ -402,6 +436,9 @@ class Bot:
         # boosting in the air is a jet: only allow it on the ground (unless unsticking)
         if not me["grounded"] or self.z_ - self.w.surface(self.x, self.y) > 1.5:
             boost = False
+        if getattr(self, "climb_jet", False):
+            boost = True
+            self.climb_jet = False
         # ---- stuck handling
         mv, j2, b2 = self.unstick(mv)
         jump = jump or j2
@@ -436,7 +473,7 @@ class Bot:
         kinds = [w["kind"] if w else None for w in me["weapons"]]
         best, bd, bmode = None, 1e9, "hold"
         # supply drops
-        for d in obs.get("drops", []):
+        for d in (obs.get("drops", []) if K_DROPS else []):
             p = d["pos"]
             dist = hyp(x, y, p[0], p[1])
             if dist > 150 or not self.in_safe(p[0], p[1], 5):
@@ -461,8 +498,11 @@ class Bot:
             if dist > lim or not self.goal_allowed(p[0], p[1]):
                 continue
             score = dist * (K_LASER_W if kind == "laser" else 0.9)
+            if not K_ROOF and p[2] - self.w.ground(p[0], p[1]) > 3:
+                continue
             if score < bd:
                 best, bd, bmode = (p[0], p[1]), score, "loot"
+                self.goal_z = p[2]
         # cubes
         for c in obs.get("cubes", []):
             p = c["pos"]
