@@ -49,6 +49,13 @@ K_PASSIVE = _k("PASSIVE", 0)              # only fight when shot at, target weak
 K_PASSIVE_D = _k("PASSIVE_D", 50)
 K_LIGHT2 = _k("LIGHT2", 0)                # with a laser, swap the arm gun for a lightning gun
 K_PRIO = _k("PRIO", 0)                    # target whoever is charging a laser at us first
+K_SCOUT = _k("SCOUT", 0)                  # early: climb a nearby roof to spot lasers, then come down
+K_SCOUT_R = _k("SCOUT_R", 90)             # only roofs this close
+K_SCOUT_T = _k("SCOUT_T", 50)             # only in the first seconds of the match
+K_ROOFCAMP = _k("ROOFCAMP", 0)            # climb a roof inside the safe zone and fight from it
+K_ROOF_MINH = _k("ROOF_MINH", 10)
+K_ROOF_MAXH = _k("ROOF_MAXH", 45)
+K_ROOF_AFTER = _k("ROOF_AFTER", 60)       # start roof camping at this time even without a laser
 K_ASTAR_STEPS = _k("ASTAR_STEPS", 360)    # A* expansions per decision (fixed work, deterministic)
 K_COVER_LOS = _k("COVER_LOS", 120)        # line-of-sight checks per cover search
 K_DROP_R = _k("DROP_R", 150)              # farthest supply drop we go for
@@ -109,6 +116,13 @@ class Bot:
         mdir = hello.get("map", {}).get("dir")
         arena = mdir if mdir and os.path.isdir(os.path.join(mdir, "v2")) else None
         self.w = World(arena, os.path.join(HERE, "grid.bin"))
+        self.roofs = self.load_roofs(arena)
+        self.roof = None
+        self.roof_wait = False
+        self.scout_roof = None
+        self.scout_t0 = 0
+        self.scout_up = None
+        self.scout_done = 0
         self.path = []
         self.path_goal = None
         self.path_t = -99
@@ -457,6 +471,15 @@ class Bot:
                 zx, zy = norm(nc[0] - self.x, nc[1] - self.y)
                 mv = norm(mv[0] + zx * 1.6, mv[1] + zy * 1.6)
 
+        if K_ROOFCAMP and self.roofs:
+            r = self.roof_logic(obs, target, has_laser, has_light, hpf, must_zone, mode, mv)
+            if r is not None:
+                mode, mv, jump, boost = r
+        elif K_SCOUT and self.roofs and not has_laser and self.known_laser() is None and target is None \
+                and not must_zone and t < K_SCOUT_T and self.scout_done < 1:
+            r = self.scout_logic()
+            if r is not None:
+                mode, mv, jump, boost = r
         # boosting in the air is a jet: only allow it on the ground (unless unsticking)
         if not me["grounded"] or self.z_ - self.w.surface(self.x, self.y) > 1.5:
             boost = False
@@ -599,6 +622,143 @@ class Bot:
             c = self.find_cover(threats, maxr=18)
             self.cover, self.cover_t, self.cover_born = c, self.t, self.t
         return c is not None and hyp(self.x, self.y, c[0], c[1]) < 18
+
+    # ------------------------------------------------------------------ rooftops
+    def load_roofs(self, arena):
+        out = []
+        try:
+            import json as _j
+            w = _j.load(open(os.path.join(arena or "/arena", "v2", "world.json")))
+        except Exception:
+            return out
+        for p in w.get("prisms", []):
+            if p.get("kind") != "building" or p.get("holes"):
+                continue
+            r = p["ring"]
+            xs, ys = r[0::2], r[1::2]
+            n = len(xs)
+            area = abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n))) / 2
+            cx, cy = sum(xs) / n, sum(ys) / n
+            h = p["top"] - self.w.ground(cx, cy)
+            if not (K_ROOF_MINH < h < K_ROOF_MAXH and area > 400):
+                continue
+            if not self._pip(cx, cy, r):
+                continue
+            # a stand point well inside the footprint: shrink toward the centroid
+            out.append({"ring": r, "top": p["top"], "c": (cx, cy), "rad": math.sqrt(area / PI), "h": h})
+        return out
+
+    @staticmethod
+    def _pip(x, y, r):
+        ins = False
+        n = len(r) // 2
+        jx, jy = r[-2], r[-1]
+        for k in range(n):
+            ix, iy = r[2 * k], r[2 * k + 1]
+            if (iy > y) != (jy > y) and x < (jx - ix) * (y - iy) / (jy - iy) + ix:
+                ins = not ins
+            jx, jy = ix, iy
+        return ins
+
+    def on_roof(self, R):
+        return R is not None and self.z_ >= R["top"] - 1.0 and self._pip(self.x, self.y, R["ring"])
+
+    def pick_roof(self):
+        nc, nr = self.z["next_center"], self.z["next_radius"]
+        best, bd = None, 1e9
+        for R in self.roofs:
+            cx, cy = R["c"]
+            if hyp(cx, cy, nc[0], nc[1]) + R["rad"] > nr * 0.85:
+                continue
+            d = hyp(self.x, self.y, cx, cy)
+            sc = d + abs(R["h"] - 20) * 2
+            if sc < bd:
+                best, bd = R, sc
+        return best
+
+    def roof_logic(self, obs, target, has_laser, has_light, hpf, must_zone, mode, mv):
+        """Returns (mode, move, jump, boost) to override, or None to leave the normal behaviour."""
+        me = self.me
+        if not (has_laser or self.t > K_ROOF_AFTER):
+            return None
+        nc, nr = self.z["next_center"], self.z["next_radius"]
+        R = self.roof
+        if R is None or hyp(R["c"][0], R["c"][1], nc[0], nc[1]) + R["rad"] > nr * 0.95:
+            R = self.roof = self.pick_roof()
+        if R is None:
+            return None
+        cx, cy = R["c"]
+        if self.on_roof(R):
+            if target is not None and mode in ("fight", "fight-seek", "duck", "retreat"):
+                fm, _b = self.fight_move(target, has_laser, has_light, hpf)
+                for cand in (fm, (-fm[0], -fm[1]), (0.0, 0.0)):
+                    nx, ny = self.x + cand[0] * 4, self.y + cand[1] * 4
+                    if self._pip(nx, ny, R["ring"]):
+                        return ("roof-fight", cand, False, False)
+                return ("roof-fight", (0.0, 0.0), False, False)
+            # hold near the middle (out of sight of the ground), drift toward it
+            d = hyp(self.x, self.y, cx, cy)
+            m = norm(cx - self.x, cy - self.y) if d > R["rad"] * 0.35 else (0.0, 0.0)
+            return ("roof", m, False, False)
+        # not on the roof yet
+        if target is not None and target["_d"] < 60:
+            return None  # deal with close threats normally first
+        d = hyp(self.x, self.y, cx, cy)
+        if d > R["rad"] + 14:
+            return ("to-roof", self.nav_dir(cx, cy), False, False)
+        # at the wall: climb with a full tank (jump, then jet while pushing over the edge)
+        e = me["energy"]
+        if me["grounded"]:
+            if self.roof_wait and e < 95:
+                return ("roof-wait", (0.0, 0.0), False, False)
+            self.roof_wait = False
+            return ("climb", norm(cx - self.x, cy - self.y), True, False)
+        if e < 3:
+            self.roof_wait = True
+            return ("climb", norm(cx - self.x, cy - self.y), False, False)
+        self.climb_jet = True
+        return ("climb", norm(cx - self.x, cy - self.y), False, True)
+
+    def scout_logic(self):
+        """Climb the nearest roof, take one full look around from up high, then come down."""
+        if self.scout_roof is None:
+            best, bd = None, 1e9
+            for R in self.roofs:
+                d = hyp(self.x, self.y, *R["c"])
+                if d < K_SCOUT_R and 12 < R["h"] < 40 and self.goal_allowed(*R["c"]) and d < bd:
+                    best, bd = R, d
+            if best is None:
+                self.scout_done = 1
+                return None
+            self.scout_roof = best
+            self.scout_t0 = self.t
+        R = self.scout_roof
+        if self.t - self.scout_t0 > 30:          # taking too long: give up
+            self.scout_done = 1
+            return None
+        if self.on_roof(R):
+            if self.scout_up is None:
+                self.scout_up = self.t
+            if self.t - self.scout_up > 2.6:     # a full turn at 2.6 rad/s scan is ~2.4 s
+                self.scout_done = 1
+                return None
+            return ("scout", (0.0, 0.0), False, False)
+        cx, cy = R["c"]
+        d = hyp(self.x, self.y, cx, cy)
+        if d > R["rad"] + 14:
+            return ("to-scout", self.nav_dir(cx, cy), False, False)
+        me = self.me
+        e = me["energy"]
+        if me["grounded"]:
+            if self.roof_wait and e < 95:
+                return ("scout-wait", (0.0, 0.0), False, False)
+            self.roof_wait = False
+            return ("climb", norm(cx - self.x, cy - self.y), True, False)
+        if e < 3:
+            self.roof_wait = True
+            return ("climb", norm(cx - self.x, cy - self.y), False, False)
+        self.climb_jet = True
+        return ("climb", norm(cx - self.x, cy - self.y), False, True)
 
     def known_laser(self):
         best, bd = None, 1e9
