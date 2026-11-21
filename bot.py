@@ -1,4 +1,5 @@
 """unos mech bot: survive the zone, grab a laser, fight from range with jinking, retreat to heal."""
+import gc
 import math
 import os
 import random
@@ -10,6 +11,17 @@ from world import AStar, World
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PI = math.pi
+PROFILE = os.environ.get("UNOS_PROF") == "1"
+def _k(name, default):
+    return float(os.environ.get("K_" + name, default))
+K_LASER_LO = _k("LASER_LO", 70); K_LASER_HI = _k("LASER_HI", 170)
+K_GUN_LO = _k("GUN_LO", 45); K_GUN_HI = _k("GUN_HI", 110)
+K_RETREAT_HP = _k("RETREAT_HP", 0.35)
+K_TWO_HP = _k("TWO_HP", 0.9)
+K_DUCK = _k("DUCK", 1)
+K_RACE = _k("RACE", 1)
+K_PRECHARGE = _k("PRECHARGE", 0)
+PROF = []
 EXPLORE = os.environ.get("UNOS_EXPLORE", "0") == "1"
 TAU = 2 * PI
 
@@ -121,8 +133,8 @@ class Bot:
         if self.astar is None:
             return
         t0 = time.perf_counter()
-        while not self.astar.done and time.perf_counter() - self.tick_start < 0.010:
-            self.astar.step(150)
+        while not self.astar.done and time.perf_counter() - self.tick_start < 0.006:
+            self.astar.step(60)
         if self.astar.done:
             p = self.astar.path
             if p:
@@ -168,6 +180,14 @@ class Bot:
     # ------------------------------------------------------------------ main
     def act(self, obs):
         self.tick_start = time.perf_counter()
+        PROF.clear(); PROF.append(("start", self.tick_start))
+        self.n_acts = getattr(self, "n_acts", 0) + 1
+        if self.n_acts == 1:
+            gc.collect()
+            gc.freeze()
+            gc.disable()   # avoid multi-ms collector pauses mid-decision
+        elif self.n_acts % 50 == 0:
+            gc.collect(0)
         me = obs["self"]
         self.me = me
         self.t = t = obs["t"]
@@ -227,6 +247,7 @@ class Bot:
         has_laser = "laser" in kinds
         has_light = "lightning" in kinds
 
+        PROF.append(("mem", time.perf_counter()))
         # ---- pick up weapons in reach
         reach = self.cfg["loot"]["pickup_radius"] - 0.3
         for p in obs.get("pickups", []):
@@ -267,6 +288,7 @@ class Bot:
         if final and nr <= 1:
             hx, hy = nc[0], nc[1]
 
+        PROF.append(("zone", time.perf_counter()))
         # ---- choose target
         vis_enemies = [m for m in enemies if m["_vis"]]
         target = None
@@ -284,13 +306,13 @@ class Bot:
         retreat = False
         if target is not None:
             finishing = target.get("hp", 1400) < 250 and target["_d"] < 140
-            if hpf < 0.35 and not finishing:
+            if hpf < K_RETREAT_HP and not finishing:
                 retreat = True
             elif n_threat >= 3:
                 retreat = True
-            elif n_threat >= 2 and (hpf < 0.9 or not finishing):
+            elif n_threat >= 2 and (hpf < K_TWO_HP or not finishing):
                 retreat = True
-        if target is not None and not retreat:
+        if target is not None and not retreat and K_RACE:
             # losing the damage race: time-to-die vs time-to-kill
             ttd = me["hp"] / max(din, 1.0)
             ttk = target.get("hp", 1400) / max(dout, 1.0)
@@ -303,6 +325,7 @@ class Bot:
             self.retreat_until = max(self.retreat_until, t + 1.0)
         healing = (t < self.retreat_until) or (hpf < 0.6 and target is None and t - self.last_hit_t < 12)
 
+        PROF.append(("target", time.perf_counter()))
         # ---- movement
         mv = (0.0, 0.0)
         boost = False
@@ -321,7 +344,7 @@ class Bot:
             mode = "retreat"
             mv = self.retreat_move(vis_enemies)
             boost = me["energy"] > 25
-        elif target is not None and self.should_duck(weapons, target):
+        elif target is not None and K_DUCK and self.should_duck(weapons, target):
             mode = "duck"
             mv = self.retreat_move(vis_enemies)
             boost = me["energy"] > 25
@@ -337,6 +360,7 @@ class Bot:
             elif mode == "hold":
                 mv = self.nav_dir(hx, hy)
 
+        PROF.append(("move", time.perf_counter()))
         # keep away from zone edge in fights
         if mode in ("fight", "retreat", "duck"):
             dc = hyp(self.x, self.y, cc[0], cc[1])
@@ -356,14 +380,21 @@ class Bot:
         act["boost"] = bool(boost)
         act["jump"] = bool(jump)
 
+        PROF.append(("stuck", time.perf_counter()))
         # ---- aim and fire
         aim, fire, reload = self.aim_fire(obs, target, npcs, mode, mv)
         act["aim"] = [round(aim[0], 4), round(aim[1], 4)]
         act["fire"] = fire
         if reload:
             act["reload"] = True
+        PROF.append(("aim", time.perf_counter()))
         self.mode = mode
         self.prev_move = mv
+        if PROFILE:
+            el = time.perf_counter() - self.tick_start
+            if el > 0.008:
+                parts = " ".join(f"{PROF[i][0]}={1000*(PROF[i][1]-PROF[i-1][1]):.1f}" for i in range(1, len(PROF)))
+                log(f"slow {el*1000:.1f}ms mode={mode} n_en={len(enemies)} {parts}")
         mf.draw.label(f"{mode} hp{me['hp']:.0f} c{me['cubes']} {''.join(k[0] if k else '-' for k in kinds)}")
         return act
 
@@ -498,9 +529,9 @@ class Bot:
             self.jink_until = t + self.rng.uniform(0.45, 1.25)
         px, py = -uy * self.jink, ux * self.jink
         if has_laser:
-            lo, hi = 70, 170
+            lo, hi = K_LASER_LO, K_LASER_HI
         else:
-            lo, hi = 45, 110
+            lo, hi = K_GUN_LO, K_GUN_HI
         if has_light and hpf > 0.6 and target.get("hp", 1400) < self.me["hp"]:
             lo, hi = 15, 35
         radial = 0.0
@@ -566,6 +597,8 @@ class Bot:
         w = self.w
         for r in [r for r in (8, 14, 22, 32, 44) if r <= maxr]:
             for k in range(16):
+                if time.perf_counter() - self.tick_start > 0.012:
+                    break
                 a = k * TAU / 16
                 cx, cy = self.x + math.cos(a) * r, self.y + math.sin(a) * r
                 if not w.walkable(cx, cy) or not self.in_safe(cx, cy, 5) and not self.goal_allowed(cx, cy):
@@ -646,6 +679,7 @@ class Bot:
         tgt_h = 4.5 * (1 + 0.05 * (tgt.get("cubes", 0) if tgt else 0))
         aux = None  # crate or npc target (gun only)
         recent_mech = any(t - tt < 6 and hyp(self.x, self.y, p[0], p[1]) < 220 for tt, p, v, hp in self.enemy_mem.values())
+        hurt = me["hp"] < me["max_hp"] * 0.85 and t - self.last_hit_t < 30
         if tgt is None and not recent_mech and mode in ("crate", "npc", "hold", "cube", "loot", "drop", "explore"):
             # shoot nearby npcs / crates when not fighting mechs
             cands = []
@@ -676,7 +710,9 @@ class Bot:
                 full = L["stats"].get("charge", 0.75)
                 ch = L.get("charge", 0) or 0
                 lrange = L["stats"].get("range", 280)
-                if ch > 0 or (L.get("cooldown", 0) <= 0.05 and dist < lrange * 0.95):
+                start_ok = (L.get("cooldown", 0) <= 0.05 and dist < lrange * 0.95
+                            and tgt.get("_vis") and self.w.los(self.muzzle(), (pos[0], pos[1], pos[2] + tgt_h)))
+                if ch > 0 or start_ok:
                     if ch >= full - 0.12:
                         dy_, dp_, dpt = self.direct(pos, vel, tgt_h)
                         aim = (dy_, dp_)
@@ -723,6 +759,18 @@ class Bot:
             if las_i is not None and (weapons[las_i].get("charge", 0) or 0) > 0:
                 fire[las_i] = True  # keep holding; it auto-fires eventually
             base = None
+            # pre-aim (and pre-charge the laser) at an enemy we just lost sight of / is tracked
+            if K_PRECHARGE:
+                recent = [(t - tt, p, v) for tt, p, v, hp in self.enemy_mem.values()
+                          if t - tt < 3.0 and hyp(self.x, self.y, p[0], p[1]) < 240]
+                if recent:
+                    age, p, v = min(recent, key=lambda r: hyp(self.x, self.y, r[1][0], r[1][1]))
+                    py_, pp_, _ = self.direct(p, v, 4.5, dt=0.3)
+                    if las_i is not None:
+                        L = weapons[las_i]
+                        if L.get("cooldown", 0) <= 0.05:
+                            fire[las_i] = True
+                    return (py_, pp_), fire, reload
             if self.threat and t - self.threat[0] < 4:
                 base = self.threat[1]
             else:
