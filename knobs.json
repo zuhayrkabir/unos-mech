@@ -29,5 +29,12 @@
   "FARM_HP": 0.6,
   "CUBE_R": 80,
   "ASTAR_STEPS": 3000,
-  "COVER_LOS": 400
+  "COVER_LOS": 400,
+  "SCOUT": 1,
+  "SCOUT_R": 90,
+  "SCOUT_T": 50,
+  "ROOFCAMP": 0,
+  "ROOF_MINH": 10,
+  "ROOF_MAXH": 45,
+  "ROOF_AFTER": 60
 }
