@@ -8,7 +8,7 @@
   "GUN_LO": 45,
   "GUN_HI": 110,
   "FARM": 1,
-  "EXPLORE": 1,
+  "EXPLORE": 0,
   "LASER_SEEK": 260,
   "LASER_W": 0.15,
   "SEEK_IN_FIGHT": 1,
@@ -20,5 +20,5 @@
   "PASSIVE_D": 50,
   "ROOF": 0,
   "LIGHT2": 0,
-  "PRIO": 1
+  "PRIO": 0
 }
