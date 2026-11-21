@@ -1,5 +1,5 @@
 {
-  "RETREAT_HP": 0.35,
+  "RETREAT_HP": 0.5,
   "TWO_HP": 0.9,
   "DUCK": 1,
   "RACE": 1,
@@ -7,6 +7,6 @@
   "LASER_HI": 170,
   "GUN_LO": 45,
   "GUN_HI": 110,
-  "FARM": 0,
+  "FARM": 1,
   "EXPLORE": 0
 }
