@@ -13,12 +13,19 @@
   "LASER_W": 0.15,
   "SEEK_IN_FIGHT": 1,
   "AVOID_LASER": 1,
-  "AVOID_LASER_D": 100,
+  "AVOID_LASER_D": 60,
   "DROPS": 1,
   "UPG": 2,
   "PASSIVE": 0,
   "PASSIVE_D": 50,
   "ROOF": 0,
   "LIGHT2": 0,
-  "PRIO": 0
+  "PRIO": 0,
+  "DROP_R": 320,
+  "DROP_CROWD": 35,
+  "CRATE_R": 180,
+  "FARM_R": 170,
+  "FARM_T": 420,
+  "FARM_HP": 0.45,
+  "CUBE_R": 150
 }
